@@ -3,12 +3,11 @@ Capture chats and export as TXT/HTML.
 
 **Only tested in Firefox with ViolentMonkey**
 
-Instructions: 
-
+Instructions: <br>
 Install script to Violentmonkey<br>
 Enter the chat you wish to download<br>
 If you only want to download your chat as an HTML (Including images in chat), just go to export as HTML<br>
-If you only want to download as text, press "capture now", once it's down, go to export as .txt<br>
+If you only want to download as .TXT, press "capture now", once it's done, go to export as .txt<br>
 (Be sure to "clear captured" between chats to avoid duplicating text)<br>
 I've included a "read me" section in the script if you want to know what the other options do.<br>
 
