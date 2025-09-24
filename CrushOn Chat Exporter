@@ -1,197 +1,583 @@
 // ==UserScript==
 // @name         CrushOn Chat Exporter
 // @namespace    co-export
-// @version      1.0
-// @description  Capture chats and export as TXT/HTML.
+// @version      1.5.0
+// @description  Capture CrushOn chats with [user]/[ai] labels. Export TXT/HTML. Stable on Firefox Android and PC.
+// @match        *://*.crushon.ai/*
 // @match        https://crushon.ai/*
 // @match        https://www.crushon.ai/*
 // @run-at       document-idle
 // @grant        GM_addStyle
+// @grant        GM_setValue
+// @grant        GM_getValue
+// @grant        GM_download
 // ==/UserScript==
-(function(){
+(function () {
   'use strict';
 
-  // ---------------- Styles ----------------
+  // ---------- CSS ----------
   const CSS = `
-  #coBox{position:fixed;right:12px;bottom:12px;z-index:2147483647;display:flex;flex-direction:column;gap:6px}
-  #coBox button{padding:7px 10px;font-size:12px;border-radius:8px;border:1px solid #333;color:#fff;background:#111;cursor:pointer}
-  #coBox button:focus{outline:2px solid #5ac8fa}
-  #coHUD{position:fixed;left:12px;bottom:12px;z-index:2147483647;background:#0f0f10;color:#e6e6e6;border:1px solid #333;border-radius:8px;padding:8px 10px;font:12px/1.4 monospace;min-width:300px;max-width:55vw}
-  #coHUD .ok{color:#7bff7b} #coHUD .warn{color:#ffd479} #coHUD .err{color:#ff6b6b} #coHUD .muted{opacity:.8}
-  #coHUD .bar{height:6px;background:#222;border:1px solid #333;border-radius:6px;overflow:hidden;margin:6px 0}
-  #coHUD .bar>i{display:block;height:100%;width:0;background:#6aa3ff}
-  .coPickOverlay{outline:2px solid #5ac8fa !important;outline-offset:-2px !important}
-  #coTab{position:fixed;right:12px;bottom:12px;width:22px;height:22px;border-radius:6px;background:#111;border:1px solid #333;color:#fff;z-index:2147483647;display:none;align-items:center;justify-content:center;font:12px monospace}
-  .coMenu{position:fixed;background:#151515;color:#fff;border:1px solid #3a3a3a;border-radius:10px;box-shadow:0 10px 32px #000b;display:none;min-width:170px;padding:6px;z-index:2147483647}
-  .coMenu button{display:block;width:100%;text-align:left;margin:2px 0;padding:7px 10px;background:#1b1b1c;color:#fff;border:1px solid #333;border-radius:8px}
-  .coMenu button:hover{background:#222}
-  #coHelp{position:fixed;inset:6% 6% auto 6%;z-index:2147483647;background:#0f0f10;color:#e6e6e6;border:1px solid #333;border-radius:10px;display:none}
-  #coHelp header{display:flex;gap:8px;align-items:center;justify-content:space-between;padding:8px 10px;border-bottom:1px solid #333;background:#111}
-  #coHelp header button{padding:6px 8px;font-size:12px;border-radius:8px;border:1px solid #333;color:#fff;background:#222;cursor:pointer}
-  #coHelp .body{padding:12px 14px;font:13px/1.55 system-ui,-apple-system,Segoe UI,Roboto,Arial}
+  /* Base UI anchored */
+  #coBox{position:fixed;right:12px;bottom:12px;z-index:2147483647;display:flex;flex-direction:column;gap:6px;background:transparent;transform-origin:bottom right}
+  #coBox button{padding:10px 12px;font-size:13px;border-radius:10px;border:1px solid #333;color:#fff;background:#111;cursor:pointer;touch-action:manipulation}
+  #coHUD{position:fixed;left:12px;bottom:12px;z-index:2147483647;background:#0f0f10;color:#e6e6e6;border:1px solid #333;border-radius:10px;padding:10px 12px;font:12px/1.4 monospace;min-width:320px;transform-origin:bottom left}
+  #coHUD .ok{color:#7bff7b} #coHUD .warn{color:#ffd479} #coHUD .muted{opacity:.8}
+  #coTab{position:fixed;right:12px;bottom:12px;width:28px;height:28px;border-radius:8px;background:#111;border:1px solid #333;color:#fff;z-index:2147483647;display:none;align-items:center;justify-content:center;font:14px monospace}
+
+  /* Menus (not draggable) */
+  .coMenu{position:fixed;background:#151515;color:#fff;border:1px solid #3a3a3a;border-radius:10px;box-shadow:0 10px 32px #000b;display:none;min-width:240px;padding:6px;z-index:2147483647}
+  .coMenu button{display:block;width:100%;text-align:left;margin:2px 0;padding:8px 10px;background:#1b1b1c;color:#fff;border:1px solid #333;border-radius:8px}
+
+  /* Pop-ups (draggable, center default). Top-left origin prevents drift on scale */
+  .coFloating{position:fixed;z-index:2147483647;background:#0f0f10;color:#e6e6e6;border:1px solid #333;border-radius:10px;transform-origin:top left}
+
+  #coPrompt.coFloating{display:none;max-width:460px;width:min(92vw,460px);border-radius:12px;padding:12px 14px;font:13px/1.45 system-ui,-apple-system,Segoe UI,Roboto,Arial;box-shadow:0 18px 48px #000a}
+  #coPrompt .title{font-weight:700;margin:0 0 6px 0}
+  #coPrompt .msg{white-space:pre-wrap;word-break:break-word}
+  #coPrompt .row{display:flex;gap:8px;justify-content:flex-end;margin-top:12px}
+  #coPrompt button{padding:10px 12px;border-radius:8px;border:1px solid #3a3a3a;background:#1b1b1c;color:#fff;cursor:pointer}
+  #coPrompt .accent{border-color:#2e7;background-image:linear-gradient(#1e5,#0a3)}
+  #coPrompt .danger{border-color:#b44;background-image:linear-gradient(#d44,#700)}
+  #coPrompt .neutral{border-color:#777;background-image:linear-gradient(#555,#333)}
+  input#coScaleSlider{width:100%}
+
+  /* Help */
+  #coHelp.coFloating{display:none;min-width:300px;max-width:min(92vw,680px)}
+  #coHelp header{display:flex;gap:8px;align-items:center;justify-content:space-between;padding:8px 10px;border-bottom:1px solid #333;background:#111;border-radius:10px 10px 0 0}
+  #coHelpClose{padding:6px 8px;font-size:12px;border:1px solid #333;color:#fff;background:#222;cursor:pointer}
+
+  /* Drag handle */
+  .coIcon{position:absolute;top:6px;width:22px;height:22px;display:flex;align-items:center;justify-content:center;font-size:14px;border:1px solid #3a3a3a;border-radius:50%;background:#1b1b1c;color:#bbb;cursor:pointer;transition:opacity .15s ease,color .15s ease,background .15s ease,border-color .15s ease}
+  .coHandle{left:6px;opacity:.35;touch-action:none}
+  .coIcon:hover{opacity:.7}
   `;
-  if (typeof GM_addStyle === 'function') GM_addStyle(CSS); else { const s=document.createElement('style'); s.textContent=CSS; (document.head||document.documentElement).appendChild(s); }
 
-  // ---------------- Helpers ----------------
-  function el(tag, attrs){ const e=document.createElement(tag); if(attrs){ for(const k in attrs){ if(k==='textContent') e.textContent=attrs[k]; else e.setAttribute(k, attrs[k]); } } return e; }
-  function mkBtn(label, onClick){ const b=document.createElement('button'); b.type='button'; b.textContent=label; if(onClick) b.addEventListener('click', onClick); return b; }
-  function $(sel,root){ return (root||document).querySelector(sel); }
-  function qsa(sel,root){ return Array.from((root||document).querySelectorAll(sel)); }
-  function download(name, data, mime){ const blob=new Blob([data],{type:(mime||'text/plain;charset=utf-8')}); const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download=name; (document.body||document.documentElement).appendChild(a); a.click(); setTimeout(()=>{URL.revokeObjectURL(a.href); a.remove();},600); }
-  const sleep = ms=>new Promise(r=>setTimeout(r,ms));
-  function esc(s){ return String(s).replace(/[^a-zA-Z0-9_-]/g, m=>`\\${m}`); }
+  (typeof GM_addStyle === 'function' ? GM_addStyle : (css => { const s=document.createElement('style'); s.textContent=css; (document.head||document.documentElement).appendChild(s);}))(CSS);
+
+  // ---------- utils ----------
+  const $  = (s,r)=> (r||document).querySelector(s);
+  const qsa= (s,r)=> Array.from((r||document).querySelectorAll(s));
+  const el = (t,a)=>{const e=document.createElement(t); if(a) for(const k in a){k==='textContent'?e.textContent=a[k]:e.setAttribute(k,a[k])} return e};
   const ts = ()=> new Date().toISOString().replace(/[:.]/g,'-');
+  const sleep = ms => new Promise(r=>setTimeout(r,ms));
+  const escapeHtml = s => String(s).replace(/[&<>"']/g, c=>({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[c]));
+  const stripHTML = s => { const d=document.createElement('div'); d.innerHTML=s; return (d.textContent||'').replace(/\r/g,'').replace(/[ \t]+\n/g,'\n').replace(/\n{3,}/g,'\n\n').trim(); };
 
-  // ---------------- State ----------------
-  let CHAT_CONTAINER = null; let running=false, iters=0, stalls=0, lastHash='';
-  const records=[]; const seen=new Set(); let openMenu=null;
+  // ---------- scale ----------
+  let UI_SCALE = (function(){ try{ const v=GM_getValue('co_ui_scale', 1); return (typeof v==='number' && v>0)? v : 1; }catch(_){ return 1; } })();
+  function applyScale(k){
+    UI_SCALE = k;
+    ['#coBox','#coHUD','#coTab','#coPrompt','#coHelp','#coMenuExport','#coMenuTools'].forEach(sel=>{
+      const n=$(sel); if(n) n.style.transform=`scale(${k})`;
+    });
+  }
 
-  // ---------------- Selectors ----------------
+  // ---------- status bar toggle (default OFF) ----------
+  let HUD_ENABLED = (function(){ try{ return !!GM_getValue('co_hud_enabled', false); }catch(_){ return false; } })();
+  function updateToolsMenuLabels(){
+    const btn=$('#coToggleHUD'); if(btn) btn.textContent = HUD_ENABLED ? 'Hide status bar' : 'Show status bar';
+  }
+  function updateHUDVisibility(){
+    const hud=$('#coHUD'); const box=$('#coBox');
+    if(!hud) return;
+    if(box?.dataset.minimized==='1'){ hud.style.display='none'; return; }
+    hud.style.display = HUD_ENABLED ? '' : 'none';
+  }
+  function setHUDEnabled(on){
+    HUD_ENABLED=!!on;
+    try{ GM_setValue('co_hud_enabled', HUD_ENABLED); }catch(_){}
+    updateHUDVisibility();
+    updateToolsMenuLabels();
+  }
+
+  // ---------- drag + persistence ----------
+  function clamp(v,min,max){ return Math.max(min, Math.min(max, v)); }
+  function viewportWH(){ return { w:(window.visualViewport?.width||window.innerWidth), h:(window.visualViewport?.height||window.innerHeight) }; }
+  function centerInViewport(el){
+    const {w,h}=viewportWH();
+    const prev = el.style.display;
+    if(prev==='none') el.style.display='block';
+    const r=el.getBoundingClientRect();
+    const L = window.scrollX + Math.max(8, (w - r.width)/2);
+    const T = window.scrollY + Math.max(8, (h - r.height)/2);
+    el.style.left=L+'px'; el.style.top=T+'px'; el.style.right='auto'; el.style.bottom='auto';
+    if(prev==='none') el.style.display='none';
+  }
+  function isWayOffscreen(el){
+    const {w,h}=viewportWH();
+    const r=el.getBoundingClientRect();
+    return (r.right < 32) || (r.bottom < 32) || (r.left > w-32) || (r.top > h-32);
+  }
+  function ensureInViewport(el){
+    const pad=8, {w,h}=viewportWH();
+    const r=el.getBoundingClientRect();
+    if(isWayOffscreen(el)){ centerInViewport(el); return; }
+    const left = clamp(r.left, pad, Math.max(pad, w - r.width - pad));
+    const top  = clamp(r.top , pad, Math.max(pad, h - r.height - pad));
+    el.style.left = left + window.scrollX + 'px';
+    el.style.top  = top  + window.scrollY + 'px';
+    el.style.right='auto'; el.style.bottom='auto';
+  }
+  function savePos(key, el){
+    try{ const r = el.getBoundingClientRect(); GM_setValue(key, {left: r.left + window.scrollX, top: r.top + window.scrollY}); }catch{}
+  }
+  function restorePos(key, el){
+    try{
+      const v = GM_getValue(key, null);
+      if(v && typeof v.left==='number' && typeof v.top==='number'){
+        el.style.left = v.left + 'px';
+        el.style.top  = v.top  + 'px';
+        el.style.right='auto'; el.style.bottom='auto';
+        return true;
+      }
+    }catch{}
+    return false;
+  }
+  function restorePosOrCenter(key, el){
+    if(!restorePos(key, el)) centerInViewport(el);
+    ensureInViewport(el);
+  }
+
+
+  function unpinWindow(_keyBase, el){
+    if(el){ el.dataset.pinned='0'; const handle=el.querySelector('.coHandle'); if(handle) handle.style.pointerEvents='auto'; }
+  }
+
+  function addOverlayControls(el, _keyBase, posKey){
+    const h=document.createElement('button');
+    h.type='button'; h.className='coIcon coHandle'; h.textContent='⠿'; h.title='Drag'; h.setAttribute('aria-label','Drag'); el.appendChild(h);
+    return {handle:h};
+  }
+
+  function makeDraggable(el, posKey, handle){
+    if(!el || !handle) return;
+    let startX=0, startY=0, offX=0, offY=0, down=false;
+
+    const start = (cx, cy)=>{
+      const r=el.getBoundingClientRect();
+      startX=cx; startY=cy; offX=r.left+window.scrollX; offY=r.top+window.scrollY; down=true;
+    };
+    const move = (cx, cy)=>{
+      if(!down) return;
+      el.style.left=(offX + (cx-startX))+'px';
+      el.style.top =(offY + (cy-startY))+'px';
+      el.style.right='auto'; el.style.bottom='auto';
+    };
+    const end = ()=>{
+      if(!down) return;
+      down=false; ensureInViewport(el); if(posKey) savePos(posKey, el);
+    };
+
+    handle.addEventListener('mousedown', e=>{ e.preventDefault(); start(e.clientX, e.clientY); });
+    document.addEventListener('mousemove', e=>move(e.clientX, e.clientY));
+    document.addEventListener('mouseup', end);
+
+    handle.addEventListener('touchstart', e=>{ const t=e.touches[0]; e.preventDefault(); start(t.clientX, t.clientY); }, {passive:false});
+    document.addEventListener('touchmove', e=>{ const t=e.touches?.[0]; if(!t) return; move(t.clientX, t.clientY); }, {passive:false});
+    document.addEventListener('touchend', end);
+  }
+
+  // clamp visible popups on viewport
+  function clampVisiblePopups(){
+    ['#coPrompt','#coHelp'].forEach(sel=>{
+      const n=$(sel);
+      if(n && n.style.display!=='none'){ ensureInViewport(n); }
+    });
+  }
+  window.addEventListener('resize', clampVisiblePopups);
+  window.addEventListener('orientationchange', clampVisiblePopups);
+  try{ window.visualViewport?.addEventListener('resize', clampVisiblePopups); }catch(_){}
+
+  // ---------- robust UI boot ----------
+  function ensureUI(){
+    if(!$('#coBox')){ try{ buildMainUI(); }catch(e){} return; }
+    const box=$('#coBox'); const hud=$('#coHUD'); const tab=$('#coTab');
+    if(box?.dataset.minimized==='1'){
+      if(tab) tab.style.display='flex';
+      applyScale(UI_SCALE);
+      return;
+    }
+    if(getComputedStyle(box).display==='none') box.style.display='';
+    if(hud){ hud.style.display = HUD_ENABLED ? '' : 'none'; }
+    if(tab) tab.style.display='none';
+    applyScale(UI_SCALE);
+  }
+  if(document.readyState==='complete' || document.readyState==='interactive') ensureUI();
+  else document.addEventListener('DOMContentLoaded', ensureUI, {once:true});
+  try{ new MutationObserver(()=>ensureUI()).observe(document.documentElement||document,{childList:true,subtree:true}); }catch(e){}
+  setTimeout(ensureUI,1200); setInterval(ensureUI,5000);
+
+  // ---------- state ----------
+  let CHAT_CONTAINER = null;
+  const records=[]; const seen=new Set();
+  let SPEAKER_SIG = GM_getValue('co_speaker_sig', null);
+  let AI_NAME_SNAPSHOT = GM_getValue('co_ai_name_snapshot', null);
+
+  // ---------- selectors ----------
   const SEL_CONTAINER = '#chat-container';
-  const SEL_GROUPS = [
-    '#chat-container > div.group.relative.flex.w-full.items-start',
-    '#chat-container > div.relative.flex.w-full.items-start'
-  ].join(',');
+  const SEL_GROUPS = '#chat-container > div.relative.flex.w-full.items-start, #chat-container > div.group.relative.flex.w-full.items-start';
   const SEL_MARKDOWN_BLOCK = "[class*='MarkdownText_']";
 
-  // ---------------- UI ----------------
-  function ensureUI(){
-    if (!$('#coBox')){
-      const box = el('div',{id:'coBox'});
-      const bCapture = mkBtn('Capture now (.TXT only)', captureNow);
-      const bExport  = mkBtn('Export ▾'); bExport.addEventListener('click', ()=>toggleMenu('export', bExport));
-      const bTools   = mkBtn('Tools ▾');  bTools.addEventListener('click', ()=>toggleMenu('tools', bTools));
-      const bClear   = mkBtn('Clear captured', clearCaptured);
-      const bHide    = mkBtn('Hide', ()=>hidePanel(true));
-      box.append(bCapture,bExport,bTools,bClear,bHide);
-      (document.body||document.documentElement).appendChild(box);
-    }
-    if (!$('#coHUD')){
-      const hud = el('div',{id:'coHUD',role:'status','aria-live':'polite'});
-      hud.innerHTML = `
-        <div><b>Status:</b> <span id=coStatus class=muted>idle</span></div>
-        <div class=bar><i id=coBar></i></div>
-        <div>Captured: <span id=coMsgs>0</span> | Groups: <span id=coGroups>0</span> | Nodes: <span id=coNodes>0</span></div>
-        <div>Iters: <span id=coIters>0</span> | Stalls: <span id=coStalls>0</span></div>
-        <div>Scroller: <span id=coScroller>document</span></div>`;
-      (document.body||document.documentElement).appendChild(hud);
-    }
-    if (!$('#coTab')){ const tab = el('div',{id:'coTab',textContent:'≡'}); tab.onclick=()=>{ $('#coBox').style.display=''; $('#coHUD').style.display=''; tab.style.display='none'; }; (document.body||document.documentElement).appendChild(tab); }
-    if (!$('#coMenuExport')){ const m=buildExportMenu(); document.body.appendChild(m); }
-    if (!$('#coMenuTools')){ const m=buildToolsMenu(); document.body.appendChild(m); }
-    if (!$('#coHelp')){ document.body.appendChild(buildHelp()); }
+  // ---------- UI ----------
+  buildMainUI();
+
+  function buildMainUI(){
+    if($('#coBox')) return;
+
+    // Main box (anchored)
+    const box=el('div',{id:'coBox'});
+    const bCapture=btn('Capture now (DO FIRST)', captureNow);
+    const bExport=btn('Export ▾', ()=>toggleMenu('export',bExport));
+    const bTools =btn('Tools ▾',  ()=>toggleMenu('tools', bTools));
+    const bHide  =btn('Hide', ()=>hidePanel(true));
+    box.append(bCapture,bExport,bTools,bHide); document.body.appendChild(box);
+
+    // HUD
+    const hud=el('div',{id:'coHUD'});
+    hud.innerHTML=`<div><b>Status:</b> <span id=coStatus class=muted>idle</span></div>
+    <div>Captured: <span id=coMsgs>0</span> | Groups: <span id=coGroups>0</span> | Split → <span id=coSplit>0U/0A</span></div>`;
+    document.body.appendChild(hud);
+
+    // Tab
+    const tab=el('div',{id:'coTab',textContent:'≡'});
+    document.body.appendChild(tab);
+    tab.onclick=()=>{ const b=$('#coBox'), h=$('#coHUD'); if(b){ b.dataset.minimized='0'; b.style.display=''; } if(h){ h.dataset.minimized='0'; h.style.display = HUD_ENABLED ? '' : 'none'; } tab.style.display='none'; };
+
+    // Menus
+    const mExp=el('div',{id:'coMenuExport',class:'coMenu'}); mExp.append(mk('Export .txt',exportTxt), mk('Export .html',exportHTML)); document.body.appendChild(mExp);
+    const mTools=el('div',{id:'coMenuTools',class:'coMenu'});
+
+    // Toggle status bar
+    const btnHudToggle=document.createElement('button');
+    btnHudToggle.id='coToggleHUD';
+    btnHudToggle.textContent = HUD_ENABLED ? 'Hide status bar' : 'Show status bar';
+    btnHudToggle.onclick=()=>setHUDEnabled(!HUD_ENABLED);
+
+    const btnClear = mk('Clear captured', ()=>clearCaptured(false));
+    const btnCal = mk('Calibrate speakers', manualCalibrate);
+    const btnResize = mk('Resize UI…', showResizeUI);
+    const btnHelp = mk('Read me', ()=>{ const h=$('#coHelp'); h.style.display='block'; closeMenus(); restorePosOrCenter('co_pos_help', h); });
+    mTools.append(btnHudToggle, btnClear, btnCal, btnResize, btnHelp); document.body.appendChild(mTools);
+
+    // Help + Prompt
+    document.body.appendChild(buildHelp());
+    document.body.appendChild(buildPrompt());
+
+    document.addEventListener('click', e=>{ if(!(e.target.closest && (e.target.closest('#coBox')||e.target.closest('.coMenu')||e.target.closest('#coPrompt')||e.target.closest('#coHelp')))) closeMenus(); }, true);
+    window.addEventListener('keydown', e=>{ if(e.altKey && String(e.key).toLowerCase()==='e'){ $('#coBox').style.display=''; $('#coHUD').style.display = HUD_ENABLED ? '' : 'none'; $('#coTab').style.display='none'; }}, true);
+
+    CHAT_CONTAINER = $(SEL_CONTAINER) || CHAT_CONTAINER;
+    setCounts('0U/0A'); setStatus('idle','muted'); applyScale(UI_SCALE);
+
+    // Drag + persistence
+    const c1=addOverlayControls(box, 'co_box', 'co_pos_box'); makeDraggable(box, 'co_pos_box', c1.handle); restorePos('co_pos_box', box);
+    const c2=addOverlayControls(hud, 'co_hud', 'co_pos_hud'); makeDraggable(hud, 'co_pos_hud', c2.handle); restorePos('co_pos_hud', hud);
+
+    updateHUDVisibility();
+    updateToolsMenuLabels();
   }
-
-  function UI(){ const g=id=>document.getElementById(id); return {status:g('coStatus'), bar:g('coBar'), msgs:g('coMsgs'), groups:g('coGroups'), nodes:g('coNodes'), iters:g('coIters'), stalls:g('coStalls'), scroller:g('coScroller')}; }
-  function setStatus(t,c='muted'){ const U=UI(); if(U.status){ U.status.className=c; U.status.textContent=t; } }
-  function setBar(p){ const U=UI(); if(U.bar) U.bar.style.width = Math.max(0,Math.min(100,p))+'%'; }
-  function hidePanel(hide=true){ const box=$('#coBox'), hud=$('#coHUD'), tab=$('#coTab'); if(!box||!hud||!tab) return; box.style.display=hide?'none':''; hud.style.display=hide?'none':''; tab.style.display=hide?'flex':'none'; closeMenus(); }
-  function pulseBar(){ let w=0; const tick=()=>{ if(!running) return; w=(w+5)%100; setBar(w); requestAnimationFrame(tick); }; requestAnimationFrame(tick); }
-  window.addEventListener('keydown', e=>{ if(e.altKey && String(e.key).toLowerCase()==='e'){ ensureUI(); hidePanel(false); } }, true);
-  const mo = new MutationObserver(()=> ensureUI()); mo.observe(document.documentElement,{childList:true,subtree:true}); setInterval(ensureUI,1500); ensureUI();
-
-  // ----- Menus -----
-  function buildExportMenu(){
-    const m=el('div',{id:'coMenuExport',class:'coMenu'});
-    m.append(
-      mkBtn('Export .txt', exportTxt),
-      mkBtn('Export .html', exportHTML)
-    );
-    return m;
-  }
-  function buildToolsMenu(){
-    const m=el('div',{id:'coMenuTools',class:'coMenu'});
-    m.append(
-      mkBtn('Pick chat box', pickContainer),
-      mkBtn('Load all messages', loadAll),
-      mkBtn('Stop', stop),
-      mkBtn('Diagnostics JSON', showDiag),
-      mkBtn('Read me', ()=>{ $('#coHelp').style.display='block'; closeMenus(); })
-    );
-    return m;
-  }
-  function toggleMenu(which, btn){
-    const id = which==='export'?'#coMenuExport':'#coMenuTools';
-    const menu = $(id);
-    if (!menu) return;
-
-    if (openMenu===id && menu.style.display==='block'){ menu.style.display='none'; openMenu=null; return; }
-
-    menu.style.visibility='hidden';
+  function btn(t,fn){const b=document.createElement('button'); b.textContent=t; b.onclick=fn; return b;}
+  function mk(t,fn){const b=document.createElement('button'); b.textContent=t; b.onclick=fn; return b;}
+  function toggleMenu(which,btn){
+    const id = which==='export' ? '#coMenuExport' : '#coMenuTools';
+    const menu=$(id); if(!menu) return;
+    const other= which==='export' ? '#coMenuTools' : '#coMenuExport';
+    const om=$(other); if(om) om.style.display='none';
+    if(menu.style.display==='block'){menu.style.display='none'; return;}
     menu.style.display='block';
-    const mw = menu.offsetWidth, mh = menu.offsetHeight;
-    const r = btn.getBoundingClientRect();
-    const px = Math.round(window.scrollX + Math.min(Math.max(8, r.left), window.innerWidth - mw - 8));
-    let py = Math.round(window.scrollY + r.top - mh - 8);
-    if (py < window.scrollY + 8) py = Math.round(window.scrollY + Math.min(r.bottom + 8, window.innerHeight - mh - 8));
-    menu.style.left = px + 'px';
-    menu.style.top  = py + 'px';
-    menu.style.visibility='visible';
-
-    for(const id2 of ['#coMenuExport','#coMenuTools']){ if(id2!==id){ const m2=$(id2); if(m2) m2.style.display='none'; } }
-
-    menu.style.display='block';
-    openMenu=id;
+    const r=btn.getBoundingClientRect();
+    const mw = menu.offsetWidth || 260;
+    menu.style.left = Math.max(8, Math.min((window.visualViewport?.width||window.innerWidth) - mw - 8, r.left + window.scrollX))+'px';
+    menu.style.top  = Math.max(8, r.top + window.scrollY - menu.offsetHeight - 8)+'px';
   }
-  function closeMenus(){ for(const sel of ['#coMenuExport','#coMenuTools']){ const n=$(sel); if(n) n.style.display='none'; } openMenu=null; }
-  document.addEventListener('click', e=>{ if(!(e.target.closest && (e.target.closest('#coBox')||e.target.closest('.coMenu')))) closeMenus(); }, true);
+  function closeMenus(){ ['#coMenuExport','#coMenuTools'].forEach(s=>{const n=$(s); if(n) n.style.display='none';}); }
+  function hidePanel(h=true){
+    const b=$('#coBox'); const hUD=$('#coHUD');
+    if(b){ b.dataset.minimized = h ? '1' : '0'; b.style.display = h ? 'none' : ''; }
+    if(hUD){
+      hUD.dataset.minimized = h ? '1' : '0';
+      hUD.style.display = h ? 'none' : (HUD_ENABLED ? '' : 'none');
+    }
+    const t=$('#coTab'); if(t) t.style.display = h ? 'flex' : 'none';
+    closeMenus();
+  }
+  function setStatus(t,c){ const s=$('#coStatus'); if(s){ s.className=c||'muted'; s.textContent=t; } }
+  function setCounts(split){ const gg=getGroups(); $('#coGroups').textContent=String(gg.length); $('#coMsgs').textContent=String(records.length); if(split!=null) $('#coSplit').textContent=split; }
 
-  // ----- Help pane (README) -----
+  // ---------- help ----------
   function buildHelp(){
-    const p=el('div',{id:'coHelp'});
-    p.innerHTML = `
-      <header><b>CrushOn Exporter • Read Me</b> <button id=coHelpClose>Close</button></header>
-      <div class=body>
-        <p><b>Capture now:</b> Snapshot current chat text and stage it for <i>.txt export only</i>. Not required for HTML.</p>
-        <p><b>Pick chat:</b> If content is missed, click and select the real scroll area. Then run <i>Load all messages</i> to fetch older history. Use <i>Capture now</i> again before exporting TXT.</p>
-        <p><b>Stop:</b> If the text area seleted with "pick chat" does not produce results, use this to stop the search process.</p>
-        <p><b>Clear captured:</b> Reset the staged snapshot to avoid duplicates or before switching chats.</p>
-        <p><b>Diagnostics JSON:</b> For developer use, use pick chat to select window, then this to gather information about it.</p>
+    const p=el('div',{id:'coHelp', class:'coFloating'});
+    p.innerHTML=`<header><b>CrushOn Exporter • Read Me</b><button id=coHelpClose>Close</button></header>
+      <div style="padding:12px 14px;font:13px/1.55 system-ui,-apple-system,Segoe UI,Roboto,Arial">
+        <p><b>Capture now:</b> Auto-calibrates for [user]/[ai] labels.</p>
+        <p><b>Export:</b> Save .txt or .html with [user]/[ai] labels.</p>
+        <p><b>Calibrate speakers:</b> Manual function as fallback if "capture now" fails.</p>
+        <p><b>Clear capture:</b> Manual function as fallback if captured information persists.</p>
+        <p><b>Resize UI:</b> Slider adjusts scale.</p>
+        <p><b>Status bar:</b> Show/Hide status bar.</p>
+        <p><b>Drag:</b> use ⠿ on the top-left.</p>
       </div>`;
-    p.querySelector('#coHelpClose').onclick=()=>{ p.style.display='none'; };
+    p.querySelector('#coHelpClose').onclick=()=>{ unpinWindow('co_help', p); p.style.display='none'; };
+    const c=addOverlayControls(p, 'co_help', 'co_pos_help'); makeDraggable(p, 'co_pos_help', c.handle);
     return p;
   }
 
-  // ---------------- Picking ----------------
-  function pickContainer(){ setStatus('pick the chat area','warn'); let last; const over=e=>{ if(last) last.classList.remove('coPickOverlay'); e.target.classList.add('coPickOverlay'); last=e.target; }; const click=e=>{ e.preventDefault(); e.stopPropagation(); cleanup(); CHAT_CONTAINER=e.target; setStatus('container selected','ok'); }; const esc=e=>{ if(e.key==='Escape') cleanup(); }; function cleanup(){ document.removeEventListener('mouseover',over,true); document.removeEventListener('click',click,true); document.removeEventListener('keydown',esc,true); if(last) last.classList.remove('coPickOverlay'); } document.addEventListener('mouseover',over,true); document.addEventListener('click',click,true); document.addEventListener('keydown',esc,true); }
+  // ---------- centered prompt ----------
+  function buildPrompt(){
+    const p=el('div',{id:'coPrompt', class:'coFloating'});
+    p.innerHTML=`<div class="title">CrushOn Exporter</div>
+      <div class="msg" id="coPromptMsg">…</div>
+      <div class="row">
+        <button id="coPromptExtra" class="neutral" style="display:none">Start over</button>
+        <button id="coPromptCancel" class="danger">Cancel</button>
+        <button id="coPromptOK" class="accent">ok</button>
+      </div>`;
+    p.querySelector('#coPromptCancel').onclick=()=>hidePrompt();
+    p.querySelector('#coPromptOK').onclick=()=>hidePrompt();
+    p.querySelector('#coPromptExtra').onclick=()=>{};
+    const c=addOverlayControls(p,'co_prompt','co_pos_prompt'); makeDraggable(p,'co_pos_prompt', c.handle);
+    return p;
+  }
+  function showPrompt(msg,opts={}){
+    updatePrompt(msg,opts);
+    const n=$('#coPrompt');
+    n.style.display='block';
+    restorePosOrCenter('co_pos_prompt', n);
+  }
+  function updatePrompt(message,opts={}){
+    $('#coPromptMsg').textContent=message;
+    const ok=$('#coPromptOK'), cancel=$('#coPromptCancel'), extra=$('#coPromptExtra');
+    const setBtn=(b,on,txt,cls,show=true)=>{ b.onclick=on||(()=>hidePrompt()); b.textContent=txt??b.textContent; b.className=cls||b.className; b.style.display=show?'':'none'; };
+    setBtn(ok,opts.onOK,opts.okText??'ok','accent',opts.ok!==false);
+    setBtn(cancel,opts.onCancel,opts.cancelText??'Cancel','danger',opts.cancel!==false);
+    setBtn(extra,opts.onExtra,opts.extraText??'Start over','neutral',opts.extra===true);
+  }
+  function hidePrompt(){ const n=$('#coPrompt'); savePos('co_pos_prompt', n); unpinWindow('co_prompt', n); n.style.display='none'; }
 
-  // ---------------- Loading + Capture ----------------
-  async function loadAll(){ if(running) return; running=true; iters=0; stalls=0; lastHash=''; setStatus('loading','warn'); pulseBar(); const scroller=findScroller(resolveContainer()); UI().scroller.textContent=scroller===document.scrollingElement?'document':nodeTag(scroller); const MAX=800; while(running && iters<MAX){ scroller.scrollTop=0; scroller.dispatchEvent(new WheelEvent('wheel',{deltaY:-1200,bubbles:true,cancelable:true})); await sleep(250); scroller.scrollTop=scroller.scrollHeight; scroller.dispatchEvent(new WheelEvent('wheel',{deltaY:1200,bubbles:true,cancelable:true})); await sleep(250); iters++; UI().iters.textContent=String(iters); setBar(iters%100); const now=snapshotHash(); if(now===lastHash) stalls++; else stalls=0; lastHash=now; UI().stalls.textContent=String(stalls); if(stalls>=10) break; } running=false; setStatus('ready','ok'); setBar(100); }
-  function stop(){ running=false; setStatus('stopped','warn'); setBar(0); }
-  function captureNow(){ const items = collectFromDOM(); let added=0; for(const it of items){ const key = it.id || (it.who+'|'+hash(it.html)); if(seen.has(key)) continue; seen.add(key); records.push(it); added++; } UI().msgs.textContent=String(records.length); setStatus('captured '+added+' items','ok'); }
-  function clearCaptured(){ records.length=0; seen.clear(); UI().msgs.textContent='0'; setStatus('cleared','ok'); }
+  // ---------- Resize UI ----------
+  function showResizeUI(){
+    const prev=UI_SCALE;
+    showPrompt('',{
+      okText:'accept', cancelText:'cancel', extraText:'default', extra:true,
+      onOK:()=>{ try{ GM_setValue('co_ui_scale', UI_SCALE); }catch{} hidePrompt(); },
+      onCancel:()=>{ applyScale(prev); hidePrompt(); },
+      onExtra:()=>{ const s=$('#coScaleSlider'); if(s){ s.value='100'; } setPct(100); applyScale(1); try{ GM_setValue('co_ui_scale', 1); }catch{} }
+    });
+    const msg=$('#coPromptMsg');
+    msg.innerHTML = `<div style="display:flex;align-items:center;gap:10px;min-width:260px">
+        <div style="min-width:88px">Scale: <b id="coScalePct"></b></div>
+        <input id="coScaleSlider" type="range" min="70" max="160" step="5" />
+      </div>`;
+    const slider=$('#coScaleSlider'); const pct=$('#coScalePct');
+    function setPct(v){ pct.textContent=v+'%'; }
+    const start=Math.round(prev*100); slider.value=String(start); setPct(start);
+    slider.oninput=()=>{ const v=Number(slider.value); setPct(v); applyScale(v/100); clampVisiblePopups(); };
+  }
 
-  // ---------------- Extraction helpers ----------------CrushOn Chat Exporter
-  function resolveContainer(){ return CHAT_CONTAINER || $(SEL_CONTAINER) || $('section#chat-container') || document.body; }
-  function findScroller(el){ let cur=el||resolveContainer(); for(let i=0;i<10 && cur;i++){ if(cur.scrollHeight - cur.clientHeight > 40) return cur; cur = cur.parentElement || document.scrollingElement; } return document.scrollingElement || document.documentElement; }
-  function getGroups(){ const root=resolveContainer(); let nodes = qsa(SEL_GROUPS, root); nodes.sort((a,b)=>a.getBoundingClientRect().top - b.getBoundingClientRect().top); UI().groups.textContent=String(nodes.length); return nodes; }
-  function getMarkdownBlock(g){ return g.querySelector(SEL_MARKDOWN_BLOCK) || g; }
-  function collectFromDOM(){ const groups=getGroups(); const out=[]; for(const g of groups){ const body=getMarkdownBlock(g); const html = normalizeHTML(body.innerHTML||''); if(!html.trim()) continue; out.push({ t: Date.now(), who: guessWho(g), html }); } return out; }
-  function guessWho(n){ const cand = n.querySelector("strong,b,[class*='name'],[class*='Name'],[data-testid*='author']"); if(cand) return (cand.textContent||'').trim().replace(/\s+/g,' '); const m=(n.textContent||'').trim().match(/^([^\n:]{2,30}):/); return m?m[1].trim():''; }
-  function normalizeHTML(s){ const div=document.createElement('div'); div.innerHTML=s; div.querySelectorAll('a').forEach(a=>{ try{ a.href=String(new URL(a.getAttribute('href')||a.href, location.href)); }catch(_){} }); div.querySelectorAll('img').forEach(img=>{ try{ img.src=String(new URL(img.getAttribute('src')||img.src, location.href)); img.loading='eager'; img.decoding='sync'; }catch(_){} }); return div.innerHTML; }
-  function snapshotHash(){ const nodes=getGroups().slice(0,30); const s=nodes.map(n=> (n.textContent||'').trim().slice(0,80)).join('|'); let h=0; for(let i=0;i<s.length;i++) h=(h*31 + s.charCodeAt(i))>>>0; UI().nodes.textContent=String(nodes.length); return String(h); }
-  function nodeTag(n){ return n ? (n.tagName + (n.id?('#'+n.id):'')) : 'null'; }
-  function stripHTML(s){ const d=document.createElement('div'); d.innerHTML=s; return (d.textContent||'').replace(/\r/g,'').replace(/[ \t]+\n/g,'\n').replace(/\n{3,}/g,'\n\n').trim(); }
-  function hash(str){ let h=0; for(let i=0;i<str.length;i++){ h=(h*31 + str.charCodeAt(i))>>>0; } return h; }
+  // ---------- DOM helpers ----------
+  function resolveContainer(){ return CHAT_CONTAINER || $(SEL_CONTAINER) || document.body; }
+  function getGroups(){ return qsa(SEL_GROUPS, resolveContainer()); }
+  function getBlock(g){ return g.querySelector(SEL_MARKDOWN_BLOCK) || g; }
+  function alignRight(el){ const root=resolveContainer().getBoundingClientRect(); const b=(getBlock(el)).getBoundingClientRect(); return (b.left + b.width/2) > (root.left + root.width/2); }
+  function hasCharacterLink(el){ return !!el.querySelector('a[href*="/character/"], [data-character-id]'); }
+  function hasNameChip(el){ return !!el.querySelector('.ml-2 span, [class*="name"], [class*="Name"]'); }
+  function featureFromRow(row){ return { right: alignRight(row), charLink: hasCharacterLink(row), nameChip: hasNameChip(row) }; }
+  function similarity(f,sig){ let s=0; if(f.right===sig.right) s+=3; if(f.charLink===sig.charLink) s+=3; if(f.nameChip===sig.nameChip) s+=1; return s; }
 
-  // ---------------- Exports ----------------
-  async function exportTxt(){ setStatus('exporting','warn'); const items = records.length? records.slice().sort((a,b)=>a.t-b.t) : collectFromDOM(); const lines=[]; lines.push('# '+(document.title||'CrushOn Chat')); lines.push('URL: '+location.href); lines.push('Exported: '+new Date().toISOString()); lines.push(''); for(const it of items){ const who=it.who?`[${it.who}] `:''; const text = it.text || stripHTML(it.html||''); lines.push(who+text); lines.push(''); } download('crushon-chat-'+ts()+'.txt', lines.join('\n')); setStatus('exported .txt','ok'); }
-  async function exportHTML(){ setStatus('building html','warn'); const items = collectFromDOM(); const inlined = await inlineImagesHTML(items); const html = wrapHTML(inlined); download('crushon-chat-'+ts()+'.html', html, 'text/html;charset=utf-8'); setStatus('exported .html','ok'); }
+  // ---------- AI name ----------
+  function cleanAiNameExact(x){
+    if(!x) return 'AI';
+    let t=String(x).trim();
+    t=t.replace(/^\s*(chat\s*with|with)\s+/i,''); t=t.replace(/\s*\|.*$/,'');
+    t=t.replace(/\s*[-–—·•]\s*.+$/,''); t=t.replace(/\s*\((?:.*?)\)\s*$/,'');
+    t=t.replace(/^[#:\s]+|[\s#•|]+$/g,''); t=t.replace(/\s{2,}/g,' ').trim();
+    if(t.length>64) t=t.slice(0,64).trim();
+    return t || 'AI';
+  }
+  function extractAiNameFromRow(row){
+    const cands=[
+      row.querySelector('a[href*="/character/"]')?.textContent,
+      row.querySelector('[data-character-name]')?.getAttribute('data-character-name'),
+      row.querySelector('.ml-2 span, [class*="name"], [class*="Name"]')?.textContent,
+      document.querySelector('meta[property="og:title"]')?.content,
+      document.title
+    ].filter(Boolean);
+    for(const raw of cands){ const t=cleanAiNameExact(raw); if(t && t!=='AI') return t; }
+    return 'AI';
+  }
+  const currentAIName = ()=> (SPEAKER_SIG && SPEAKER_SIG.aiName) || AI_NAME_SNAPSHOT || 'AI';
+  function setAIName(name){
+    const n = cleanAiNameExact(name||'AI');
+    SPEAKER_SIG = Object.assign({}, SPEAKER_SIG||{}, { aiName: n });
+    try{ GM_setValue('co_speaker_sig', SPEAKER_SIG); }catch{}
+    AI_NAME_SNAPSHOT = n; try{ GM_setValue('co_ai_name_snapshot', AI_NAME_SNAPSHOT); }catch{}
+  }
 
-  async function inlineImagesHTML(items){ const container=document.createElement('div'); for(const it of items){ const art=document.createElement('article'); art.className='msg'; const hdr=document.createElement('header'); hdr.textContent=it.who||''; const body=document.createElement('div'); body.className='body'; body.innerHTML=it.html; art.append(hdr,body); container.appendChild(art); } const imgs = Array.from(container.querySelectorAll('img')); await Promise.all(imgs.map(async img=>{ const src=img.getAttribute('src'); if(!src) return; try{ const res=await fetch(src, {mode:'cors'}); const blob=await res.blob(); const data=await blobToDataURL(blob); img.setAttribute('src', data); }catch(_){ } })); return container.innerHTML; }
-  function blobToDataURL(blob){ return new Promise((res,rej)=>{ const r=new FileReader(); r.onload=()=>res(r.result); r.onerror=rej; r.readAsDataURL(blob); }); }
+  // ---------- calibration ----------
+  function clearCalibration(src){
+    SPEAKER_SIG = null; AI_NAME_SNAPSHOT = null;
+    try{ GM_setValue('co_speaker_sig', null); GM_setValue('co_ai_name_snapshot', null);}catch{}
+    if(src) setStatus(`calibration reset (${src})`,'warn');
+  }
+  const labelFor = who => who==='USER' ? 'user' : 'ai';
 
-  function wrapHTML(inner){ return `<!doctype html><html><head>${styleHead()}</head><body><div class=chat>${metaBlock()}${inner}</div></body></html>`; }
-  function styleHead(){ return `<meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><style>${styleCss()}</style>`; }
-  function styleCss(){ return `:root{color-scheme:dark light} body{margin:24px;font-family:ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;background:#0b0b0b;color:#e6e6e6} a{color:#7bb7ff} .chat{max-width:920px;margin:0 auto} .meta{font:12px/1.4 monospace;opacity:.8;margin-bottom:12px} article.msg{background:#121212;border:1px solid #333;border-radius:10px;padding:12px 14px;margin:10px 0} article.msg header{font-weight:600;margin-bottom:6px;opacity:.9} article.msg .body img{max-width:100%;height:auto} pre,code{background:#0e0e0e;border:1px solid #2a2a2a;border-radius:6px;padding:2px 4px}`; }
-  function metaBlock(){ return `<div class=meta>URL: ${escapeHtml(location.href)}<br>Exported: ${new Date().toISOString()}</div>`; }
-  function escapeHtml(s){ return String(s).replace(/[&<>\"']/g, c=>({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[c])); }
+  function autoCalibrateTry(){
+    const rows=getGroups(); if(!rows.length) return null;
+    const candUser = rows.find(r=>alignRight(r) && !hasCharacterLink(r)) || rows.find(r=>alignRight(r));
+    const candAI   = rows.find(r=>hasCharacterLink(r)) || rows.find(r=>!alignRight(r));
+    if(!candUser || !candAI || candUser===candAI) return null;
+    const u=featureFromRow(candUser); const a=featureFromRow(candAI);
+    const aiName = extractAiNameFromRow(candAI);
+    return { sig:{ user:u, ai:a, aiName: cleanAiNameExact(aiName) } };
+  }
 
-  // ---------------- Diagnostics ----------------
-  function showDiag(){ const box = resolveContainer(); const info = { url: location.href, title: document.title, time: new Date().toISOString(), containerCss: cssPath(box), containerRotated: /rotateX\(180deg\)/i.test(box.getAttribute('style')||getComputedStyle(box).transform||''), groupCount: getGroups().length, firstGroupPath: getGroups()[0] ? cssPath(getGroups()[0]) : '' }; const pretty = JSON.stringify(info,null,2); download('diagnostics.json', pretty, 'application/json'); }
-  function cssPath(start){ if(!(start instanceof Element)) return ''; const seg=[]; let node=start; while(node && node.nodeType===1){ let part=node.nodeName.toLowerCase(); if(node.id){ part += '#' + esc(node.id); seg.unshift(part); break; } const cls = (node.className && typeof node.className==='string')? node.className.trim().split(/\s+/).map(esc).join('.') : ''; if(cls) part += '.'+cls; let idx=1; let sib=node.previousElementSibling; while(sib){ if(sib.nodeName===node.nodeName) idx++; sib=sib.previousElementSibling; } let hasSameAfter=false; let ns=node.nextElementSibling; while(ns && !hasSameAfter){ if(ns.nodeName===node.nodeName) hasSameAfter=true; ns=ns.nextElementSibling; } if(idx>1 || hasSameAfter) part += ':nth-of-type('+idx+')'; seg.unshift(part); node=node.parentElement; } return seg.join(' > '); }
+  async function manualCalibrate(){
+    clearCaptured(true);
+    try{
+      await promptOKCancel('Calibrate: Select YOUR bubble.\nPress ok to start.','ok','Cancel');
+      const userNode = await pickOneRow();
+      await promptOKCancel('Calibrate: Select AI bubble.\nPress ok to start.','ok','Cancel');
+      const aiNode = await pickOneRow();
+      const u=featureFromRow(userNode); const a=featureFromRow(aiNode);
+      const aiName=cleanAiNameExact(extractAiNameFromRow(aiNode));
+      showPrompt(`Confirm calibration:\nUser = USER\nAI = ${aiName}`,{
+        okText:'ok', extra:true, extraText:'Start over',
+        onOK: async ()=>{
+          SPEAKER_SIG={user:u, ai:a, aiName};
+          try{ GM_setValue('co_speaker_sig', SPEAKER_SIG); }catch{}
+          setAIName(aiName);
+          updatePrompt('Capturing…',{cancel:false, ok:false});
+          await doCaptureAfterCalibrated();
+          updatePrompt(`Success: captured ${records.length} messages.\nSplit: ${$('#coSplit').textContent}\nPress ok to close.`,{okText:'ok', onOK:hidePrompt, cancel:false});
+        },
+        onExtra: ()=>{ hidePrompt(); manualCalibrate(); },
+        onCancel: ()=>{ cancelAndClear(); }
+      });
+    }catch{ cancelAndClear(); }
+  }
+  function pickOneRow(){
+    return new Promise((resolve,reject)=>{
+      hidePrompt();
+      const selector=SEL_GROUPS;
+      const onClick=e=>{ const row=e.target.closest?.(selector); if(!row) return; cleanup(); resolve(row); };
+      const onKey=e=>{ if(e.key==='Escape'){ cleanup(); reject(new Error('cancel')); } };
+      function cleanup(){ document.removeEventListener('click',onClick,true); document.removeEventListener('keydown',onKey,true); }
+      document.addEventListener('click',onClick,true); document.addEventListener('keydown',onKey,true);
+    });
+  }
 
-  // --------------- Boot ----------------
-  if ($(SEL_CONTAINER)) CHAT_CONTAINER = $(SEL_CONTAINER);
-  setStatus('idle');
+  // ---------- capture ----------
+  async function captureNow(){
+    clearCaptured(true); clearCalibration('captureNow');
+    showPrompt('Attempting auto-calibration…',{cancel:false, ok:false}); await sleep(100);
+    const auto=autoCalibrateTry();
+    if(auto){
+      SPEAKER_SIG=auto.sig; try{ GM_setValue('co_speaker_sig', SPEAKER_SIG); }catch{}
+      setAIName(auto.sig.aiName||'AI');
+      updatePrompt(`Auto-calibration succeeded as [${currentAIName()}]. Capturing…`, {cancel:false, ok:false});
+      await sleep(60); await doCaptureAfterCalibrated();
+      updatePrompt(`Success: captured ${records.length} messages.\nSplit: ${$('#coSplit').textContent}\nPress ok to close.`, {okText:'ok', onOK:hidePrompt, cancel:false});
+      return;
+    }
+    try{
+      await promptOKCancel('Auto failed.\nCalibrate: Select YOUR bubble.\nPress ok to start.','ok','Cancel');
+      const userNode=await pickOneRow();
+      await promptOKCancel('Calibrate: Select AI bubble.\nPress ok to start.','ok','Cancel');
+      const aiNode=await pickOneRow();
+      const u=featureFromRow(userNode); const a=featureFromRow(aiNode);
+      const aiName=cleanAiNameExact(extractAiNameFromRow(aiNode));
+      showPrompt(`Confirm calibration:\nUser = USER\nAI = ${aiName}`,{
+        okText:'ok', extra:true, extraText:'Start over',
+        onOK: async ()=>{
+          SPEAKER_SIG={user:u, ai:a, aiName}; try{ GM_setValue('co_speaker_sig', SPEAKER_SIG); }catch{}
+          setAIName(aiName);
+          updatePrompt('Capturing…',{cancel:false, ok:false});
+          await doCaptureAfterCalibrated();
+          updatePrompt(`Success: captured ${records.length} messages.\nSplit: ${$('#coSplit').textContent}\nPress ok to close.`, {okText:'ok', onOK:hidePrompt, cancel:false});
+        },
+        onExtra: ()=>{ hidePrompt(); captureNow(); },
+        onCancel: ()=>{ cancelAndClear(); }
+      });
+    }catch{ cancelAndClear(); }
+  }
+  function fixSkew(items){
+    let u=0,a=0; for(const it of items){ if(it.who==='USER') u++; else if(it.who==='AI') a++; }
+    if(a<=1 && u>=3 && SPEAKER_SIG && SPEAKER_SIG.ai && typeof SPEAKER_SIG.ai.right==='boolean'){
+      const aiSide=SPEAKER_SIG.ai.right; for(const it of items){ it.who = (it.right===aiSide ? 'AI' : 'USER'); }
+    }
+  }
+  async function doCaptureAfterCalibrated(){
+    const items=collectFromDOM(); fixSkew(items);
+    let u=0,a=0; for(const it of items){ if(it.who==='USER') u++; else a++; }
+    for(const it of items){ const key=it.who+'|'+it.html; if(seen.has(key)) continue; seen.add(key); records.push(it); }
+    setCounts(`${u}U/${a}A`); setStatus(`calibrated as [${currentAIName()}] and captured ${items.length} items`,'ok');
+  }
+  function decideWho(g){
+    if(SPEAKER_SIG){
+      const f=featureFromRow(g); const su=similarity(f,SPEAKER_SIG.user); const sa=similarity(f,SPEAKER_SIG.ai);
+      if(su===sa){ if(f.right===SPEAKER_SIG.ai.right) return 'AI'; if(f.charLink && !SPEAKER_SIG.user.charLink) return 'AI'; if(f.nameChip && !SPEAKER_SIG.user.nameChip) return 'AI'; }
+      return su>sa ? 'USER' : 'AI';
+    }
+    return alignRight(g) ? 'USER' : 'AI';
+  }
+  function collectFromDOM(){
+    const groups=getGroups(); const out=[];
+    for(const g of groups){
+      const body=getBlock(g); const html=(body.innerHTML||'').trim(); if(!html) continue;
+      const f=featureFromRow(g);
+      out.push({t:Date.now(), who:decideWho(g), html, right:f.right, charLink:f.charLink, nameChip:f.nameChip});
+    }
+    return out;
+  }
+
+  // ---------- clear ----------
+  function clearCaptured(silent=false){
+    records.length=0; seen.clear();
+    const msgs=$('#coMsgs'); if(msgs) msgs.textContent='0';
+    const groups=$('#coGroups'); if(groups) groups.textContent='0';
+    const split=$('#coSplit'); if(split) split.textContent='0U/0A';
+    clearCalibration('clearCaptured');
+    if(!silent) showPrompt('Captured set and calibration cleared.', {cancel:false, okText:'ok', onOK:hidePrompt});
+  }
+
+  // ---------- download/export ----------
+  const download=(name,data,mime)=>{
+    const type = mime || 'text/plain;charset=utf-8';
+    const blob = new Blob([data], {type: type});
+    const tryShare = async ()=>{ try{ if(navigator.canShare && typeof File!=='undefined'){ const f=new File([blob], name, {type}); if(navigator.canShare({files:[f]})){ await navigator.share({files:[f], title:name}); return true; } } }catch(_){} return false; };
+    const tryAnchor = ()=>{ try{ const url=URL.createObjectURL(blob); const a=document.createElement('a'); a.href=url; a.download=name; a.rel='noopener'; a.target='_self'; document.body.appendChild(a); a.click(); setTimeout(()=>{ URL.revokeObjectURL(url); a.remove(); }, 1500); return true; }catch(_){ return false; } };
+    const tryGM = ()=>{ if(typeof GM_download==='function'){ try{ const dataUrl='data:'+type+','+encodeURIComponent(String(data)); GM_download({url:dataUrl, name, saveAs:true}); return true; }catch(_){ return false; } } return false; };
+    const tryMs = ()=>{ try{ if('msSaveOrOpenBlob' in navigator){ navigator.msSaveOrOpenBlob(blob, name); return true; } }catch(_){ return false; } return false; };
+    tryShare().then(ok=>{ if(ok) return; if(tryAnchor()) return; if(tryGM()) return; if(tryMs()) return; const url=URL.createObjectURL(blob); window.open(url,'_blank'); setTimeout(()=>URL.revokeObjectURL(url),2000); });
+  };
+  function exportTxt(){
+    if(!records.length){ showPrompt('No captured data. Use “Capture now” first.',{cancel:false, okText:'ok', onOK:hidePrompt}); return; }
+    const items=records.slice().sort((a,b)=>a.t-b.t);
+    const lines=['# '+(document.title||'CrushOn Chat'),'URL: '+location.href,'AI: '+currentAIName(),'Exported: '+new Date().toISOString(),'' ];
+    for(const it of items){ lines.push(`[${labelFor(it.who)}] `+stripHTML(it.html)); lines.push(''); }
+    download('crushon-chat-'+ts()+'.txt', lines.join('\n')); setStatus('exported .txt','ok');
+  }
+  function exportHTML(){
+    if(!records.length){ showPrompt('No captured data. Use “Capture now” first.',{cancel:false, okText:'ok', onOK:hidePrompt}); return; }
+    const items=records.slice().sort((a,b)=>a.t-b.t);
+    const head=`<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>
+:root{color-scheme:dark light}
+body{margin:24px;font-family:ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;background:#0b0b0b;color:#e6e6e6}
+a{color:#7bb7ff}.chat{max-width:920px;margin:0 auto}.meta{font:12px/1.4 monospace;opacity:.8;margin-bottom:12px}.title{font:16px/1.4 monospace;margin:0 0 6px 0}
+article.msg{position:relative;background:#121212;border:1px solid #333;border-radius:12px;padding:18px 16px 14px;margin:12px 0}
+article.msg .cap{position:absolute;top:-10px;left:12px;font:11px/1 monospace;letter-spacing:.3px;background:#1c1c1c;border:1px solid #3a3a3a;border-radius:8px;padding:3px 6px}
+article.msg .cap.user{background:#291a2d;border-color:#5a3a66}article.msg .cap.ai{background:#182028;border-color:#334655}
+article.msg .body img{max-width:100%;height:auto}pre,code{background:#0e0e0e;border:1px solid #2a2a2a;border-radius:6px;padding:2px 4px}
+</style></head><body><div class="chat"><div class="title"># ${escapeHtml(document.title||'CrushOn Chat')}</div><div class="meta">URL: ${escapeHtml(location.href)}<br>AI: ${escapeHtml(currentAIName())}<br>Exported: ${new Date().toISOString()}</div>`;
+    const body=items.map(it=>{ const capCls=(it.who==='USER')?'user':'ai'; const capTxt='['+escapeHtml(labelFor(it.who))+']'; return `<article class="msg"><div class="cap ${capCls}">${capTxt}</div><div class="body">${it.html}</div></article>`; }).join('');
+    const html=head+body+'</div></body></html>';
+    download('crushon-chat-'+ts()+'.html', html, 'text/html;charset=utf-8'); setStatus('exported .html','ok');
+  }
+
+  // ---------- simple prompt helpers ----------
+  function promptOKCancel(message, okText='ok', cancelText='Cancel'){
+    return new Promise((resolve,reject)=>{ showPrompt(message,{okText,cancelText,onOK:()=>resolve(true),onCancel:()=>reject(new Error('cancel'))}); });
+  }
+  function cancelAndClear(){ clearCaptured(true); hidePrompt(); setStatus('canceled','warn'); }
+
 })();
