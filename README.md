@@ -1,15 +1,14 @@
 # CrushOnAI-Chat-Exporter
-Capture chats and export as TXT/HTML.
+Capture chats and export as TXT/HTML.<br>
 
-**Only tested in Firefox with ViolentMonkey**
+**V1.5 - Now easier, cleaner, and includes a clear separation between "AI" and "User" messages.**<br>
+**Only tested in Firefox (PC+Android) with ViolentMonkey**
 
 Instructions: <br>
 Install script to Violentmonkey<br>
 Enter the chat you wish to download<br>
-If you only want to download your chat as an HTML (Including images in chat), just go to export as HTML<br>
-If you only want to download as .TXT, press "capture now", once it's done, go to export as .txt<br>
-(Be sure to "clear captured" between chats to avoid duplicating text)<br>
-I've included a "read me" section in the script if you want to know what the other options do.<br>
+Click "Capture now" and wait for confirmation. Then Proceed to export as either .TXT/HTML.<br>
+I've included a "read me" section in the script to explain other features and manual functions in the event of an error.<br>
 
 
 I created this script for myself because I wanted to be able to export my conversations, feed them into ChatGPT, and get a summary to improve the quality of my chats. I added the HTML function for those who wish to preserve their memories off-site. I hope this helps you.<br>
