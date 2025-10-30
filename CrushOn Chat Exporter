@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         CrushOn Chat Exporter
 // @namespace    co-export
-// @version      1.5.0
+// @version      1.6.0
 // @description  Capture CrushOn chats with [user]/[ai] labels. Export TXT/HTML. Stable on Firefox Android and PC.
 // @match        *://*.crushon.ai/*
 // @match        https://crushon.ai/*
@@ -12,23 +12,23 @@
 // @grant        GM_getValue
 // @grant        GM_download
 // ==/UserScript==
+
 (function () {
   'use strict';
 
   // ---------- CSS ----------
   const CSS = `
-  /* Base UI anchored */
+
   #coBox{position:fixed;right:12px;bottom:12px;z-index:2147483647;display:flex;flex-direction:column;gap:6px;background:transparent;transform-origin:bottom right}
   #coBox button{padding:10px 12px;font-size:13px;border-radius:10px;border:1px solid #333;color:#fff;background:#111;cursor:pointer;touch-action:manipulation}
   #coHUD{position:fixed;left:12px;bottom:12px;z-index:2147483647;background:#0f0f10;color:#e6e6e6;border:1px solid #333;border-radius:10px;padding:10px 12px;font:12px/1.4 monospace;min-width:320px;transform-origin:bottom left}
   #coHUD .ok{color:#7bff7b} #coHUD .warn{color:#ffd479} #coHUD .muted{opacity:.8}
   #coTab{position:fixed;right:12px;bottom:12px;width:28px;height:28px;border-radius:8px;background:#111;border:1px solid #333;color:#fff;z-index:2147483647;display:none;align-items:center;justify-content:center;font:14px monospace}
 
-  /* Menus (not draggable) */
+
   .coMenu{position:fixed;background:#151515;color:#fff;border:1px solid #3a3a3a;border-radius:10px;box-shadow:0 10px 32px #000b;display:none;min-width:240px;padding:6px;z-index:2147483647}
   .coMenu button{display:block;width:100%;text-align:left;margin:2px 0;padding:8px 10px;background:#1b1b1c;color:#fff;border:1px solid #333;border-radius:8px}
 
-  /* Pop-ups (draggable, center default). Top-left origin prevents drift on scale */
   .coFloating{position:fixed;z-index:2147483647;background:#0f0f10;color:#e6e6e6;border:1px solid #333;border-radius:10px;transform-origin:top left}
 
   #coPrompt.coFloating{display:none;max-width:460px;width:min(92vw,460px);border-radius:12px;padding:12px 14px;font:13px/1.45 system-ui,-apple-system,Segoe UI,Roboto,Arial;box-shadow:0 18px 48px #000a}
@@ -41,18 +41,19 @@
   #coPrompt .neutral{border-color:#777;background-image:linear-gradient(#555,#333)}
   input#coScaleSlider{width:100%}
 
-  /* Help */
+
   #coHelp.coFloating{display:none;min-width:300px;max-width:min(92vw,680px)}
   #coHelp header{display:flex;gap:8px;align-items:center;justify-content:space-between;padding:8px 10px;border-bottom:1px solid #333;background:#111;border-radius:10px 10px 0 0}
   #coHelpClose{padding:6px 8px;font-size:12px;border:1px solid #333;color:#fff;background:#222;cursor:pointer}
 
-  /* Drag handle */
+
   .coIcon{position:absolute;top:6px;width:22px;height:22px;display:flex;align-items:center;justify-content:center;font-size:14px;border:1px solid #3a3a3a;border-radius:50%;background:#1b1b1c;color:#bbb;cursor:pointer;transition:opacity .15s ease,color .15s ease,background .15s ease,border-color .15s ease}
   .coHandle{left:6px;opacity:.35;touch-action:none}
   .coIcon:hover{opacity:.7}
   `;
-
-  (typeof GM_addStyle === 'function' ? GM_addStyle : (css => { const s=document.createElement('style'); s.textContent=css; (document.head||document.documentElement).appendChild(s);}))(CSS);
+  (typeof GM_addStyle === 'function'
+    ? GM_addStyle
+    : (css => { const s=document.createElement('style'); s.textContent=css; (document.head||document.documentElement).appendChild(s); }))(CSS);
 
   // ---------- utils ----------
   const $  = (s,r)=> (r||document).querySelector(s);
@@ -72,7 +73,7 @@
     });
   }
 
-  // ---------- status bar toggle (default OFF) ----------
+  // ---------- status bar toggle ----------
   let HUD_ENABLED = (function(){ try{ return !!GM_getValue('co_hud_enabled', false); }catch(_){ return false; } })();
   function updateToolsMenuLabels(){
     const btn=$('#coToggleHUD'); if(btn) btn.textContent = HUD_ENABLED ? 'Hide status bar' : 'Show status bar';
@@ -118,66 +119,36 @@
     el.style.top  = top  + window.scrollY + 'px';
     el.style.right='auto'; el.style.bottom='auto';
   }
-  function savePos(key, el){
-    try{ const r = el.getBoundingClientRect(); GM_setValue(key, {left: r.left + window.scrollX, top: r.top + window.scrollY}); }catch{}
-  }
+  function savePos(key, el){ try{ const r = el.getBoundingClientRect(); GM_setValue(key, {left: r.left + window.scrollX, top: r.top + window.scrollY}); }catch{} }
   function restorePos(key, el){
-    try{
-      const v = GM_getValue(key, null);
+    try{ const v = GM_getValue(key, null);
       if(v && typeof v.left==='number' && typeof v.top==='number'){
-        el.style.left = v.left + 'px';
-        el.style.top  = v.top  + 'px';
-        el.style.right='auto'; el.style.bottom='auto';
-        return true;
+        el.style.left = v.left + 'px'; el.style.top  = v.top  + 'px'; el.style.right='auto'; el.style.bottom='auto'; return true;
       }
     }catch{}
     return false;
   }
-  function restorePosOrCenter(key, el){
-    if(!restorePos(key, el)) centerInViewport(el);
-    ensureInViewport(el);
-  }
+  function restorePosOrCenter(key, el){ if(!restorePos(key, el)) centerInViewport(el); ensureInViewport(el); }
 
-
-  function unpinWindow(_keyBase, el){
-    if(el){ el.dataset.pinned='0'; const handle=el.querySelector('.coHandle'); if(handle) handle.style.pointerEvents='auto'; }
-  }
-
+  function unpinWindow(_keyBase, el){ if(el){ el.dataset.pinned='0'; const handle=el.querySelector('.coHandle'); if(handle) handle.style.pointerEvents='auto'; } }
   function addOverlayControls(el, _keyBase, posKey){
     const h=document.createElement('button');
     h.type='button'; h.className='coIcon coHandle'; h.textContent='⠿'; h.title='Drag'; h.setAttribute('aria-label','Drag'); el.appendChild(h);
     return {handle:h};
   }
-
   function makeDraggable(el, posKey, handle){
     if(!el || !handle) return;
     let startX=0, startY=0, offX=0, offY=0, down=false;
-
-    const start = (cx, cy)=>{
-      const r=el.getBoundingClientRect();
-      startX=cx; startY=cy; offX=r.left+window.scrollX; offY=r.top+window.scrollY; down=true;
-    };
-    const move = (cx, cy)=>{
-      if(!down) return;
-      el.style.left=(offX + (cx-startX))+'px';
-      el.style.top =(offY + (cy-startY))+'px';
-      el.style.right='auto'; el.style.bottom='auto';
-    };
-    const end = ()=>{
-      if(!down) return;
-      down=false; ensureInViewport(el); if(posKey) savePos(posKey, el);
-    };
-
+    const start = (cx, cy)=>{ const r=el.getBoundingClientRect(); startX=cx; startY=cy; offX=r.left+window.scrollX; offY=r.top+window.scrollY; down=true; };
+    const move = (cx, cy)=>{ if(!down) return; el.style.left=(offX + (cx-startX))+'px'; el.style.top =(offY + (cy-startY))+'px'; el.style.right='auto'; el.style.bottom='auto'; };
+    const end = ()=>{ if(!down) return; down=false; ensureInViewport(el); if(posKey) savePos(posKey, el); };
     handle.addEventListener('mousedown', e=>{ e.preventDefault(); start(e.clientX, e.clientY); });
     document.addEventListener('mousemove', e=>move(e.clientX, e.clientY));
     document.addEventListener('mouseup', end);
-
     handle.addEventListener('touchstart', e=>{ const t=e.touches[0]; e.preventDefault(); start(t.clientX, t.clientY); }, {passive:false});
     document.addEventListener('touchmove', e=>{ const t=e.touches?.[0]; if(!t) return; move(t.clientX, t.clientY); }, {passive:false});
     document.addEventListener('touchend', end);
   }
-
-  // clamp visible popups on viewport
   function clampVisiblePopups(){
     ['#coPrompt','#coHelp'].forEach(sel=>{
       const n=$(sel);
@@ -192,11 +163,7 @@
   function ensureUI(){
     if(!$('#coBox')){ try{ buildMainUI(); }catch(e){} return; }
     const box=$('#coBox'); const hud=$('#coHUD'); const tab=$('#coTab');
-    if(box?.dataset.minimized==='1'){
-      if(tab) tab.style.display='flex';
-      applyScale(UI_SCALE);
-      return;
-    }
+    if(box?.dataset.minimized==='1'){ if(tab) tab.style.display='flex'; applyScale(UI_SCALE); return; }
     if(getComputedStyle(box).display==='none') box.style.display='';
     if(hud){ hud.style.display = HUD_ENABLED ? '' : 'none'; }
     if(tab) tab.style.display='none';
@@ -210,13 +177,15 @@
   // ---------- state ----------
   let CHAT_CONTAINER = null;
   const records=[]; const seen=new Set();
-  let SPEAKER_SIG = GM_getValue('co_speaker_sig', null);
-  let AI_NAME_SNAPSHOT = GM_getValue('co_ai_name_snapshot', null);
+  let SPEAKER_SIG = (function(){ try{ return GM_getValue('co_speaker_sig', null);}catch(_){ return null; } })();
+  let AI_NAME_SNAPSHOT = (function(){ try{ return GM_getValue('co_ai_name_snapshot', null);}catch(_){ return null; } })();
 
   // ---------- selectors ----------
   const SEL_CONTAINER = '#chat-container';
-  const SEL_GROUPS = '#chat-container > div.relative.flex.w-full.items-start, #chat-container > div.group.relative.flex.w-full.items-start';
-  const SEL_MARKDOWN_BLOCK = "[class*='MarkdownText_']";
+  // Updated: descendant matching so AI rows nested under div.w-full are found
+  const SEL_GROUPS = '#chat-container :is(div.relative.flex.w-full.items-start, div.group.relative.flex.w-full.items-start)';
+  // Updated: include .prose fallback
+  const SEL_MARKDOWN_BLOCK = "[class*='MarkdownText_'], .prose";
 
   // ---------- UI ----------
   buildMainUI();
@@ -338,12 +307,7 @@
     const c=addOverlayControls(p,'co_prompt','co_pos_prompt'); makeDraggable(p,'co_pos_prompt', c.handle);
     return p;
   }
-  function showPrompt(msg,opts={}){
-    updatePrompt(msg,opts);
-    const n=$('#coPrompt');
-    n.style.display='block';
-    restorePosOrCenter('co_pos_prompt', n);
-  }
+  function showPrompt(msg,opts={}){ updatePrompt(msg,opts); const n=$('#coPrompt'); n.style.display='block'; restorePosOrCenter('co_pos_prompt', n); }
   function updatePrompt(message,opts={}){
     $('#coPromptMsg').textContent=message;
     const ok=$('#coPromptOK'), cancel=$('#coPromptCancel'), extra=$('#coPromptExtra');
@@ -512,14 +476,14 @@
     for(const it of items){ const key=it.who+'|'+it.html; if(seen.has(key)) continue; seen.add(key); records.push(it); }
     setCounts(`${u}U/${a}A`); setStatus(`calibrated as [${currentAIName()}] and captured ${items.length} items`,'ok');
   }
+
+  // --------- CHANGED: role decision (hasCharLink-first) ---------
   function decideWho(g){
-    if(SPEAKER_SIG){
-      const f=featureFromRow(g); const su=similarity(f,SPEAKER_SIG.user); const sa=similarity(f,SPEAKER_SIG.ai);
-      if(su===sa){ if(f.right===SPEAKER_SIG.ai.right) return 'AI'; if(f.charLink && !SPEAKER_SIG.user.charLink) return 'AI'; if(f.nameChip && !SPEAKER_SIG.user.nameChip) return 'AI'; }
-      return su>sa ? 'USER' : 'AI';
-    }
-    return alignRight(g) ? 'USER' : 'AI';
+    const f = featureFromRow(g);
+    // Primary rule per request: if the message has a character link, it's AI; otherwise it's USER.
+    return f.charLink ? 'AI' : 'USER';
   }
+
   function collectFromDOM(){
     const groups=getGroups(); const out=[];
     for(const g of groups){
@@ -544,18 +508,19 @@
   const download=(name,data,mime)=>{
     const type = mime || 'text/plain;charset=utf-8';
     const blob = new Blob([data], {type: type});
-    const tryShare = async ()=>{ try{ if(navigator.canShare && typeof File!=='undefined'){ const f=new File([blob], name, {type}); if(navigator.canShare({files:[f]})){ await navigator.share({files:[f], title:name}); return true; } } }catch(_){} return false; };
+    const tryShare = async ()=>{ try{ if(navigator.canShare && typeof File!=='undefined'){ const f=new File([blob], name, {type}); if(navigator.canShare({files:[f]})){ await navigator.share({files:[f], title:name}); return true; } } }catch(_){ } return false; };
     const tryAnchor = ()=>{ try{ const url=URL.createObjectURL(blob); const a=document.createElement('a'); a.href=url; a.download=name; a.rel='noopener'; a.target='_self'; document.body.appendChild(a); a.click(); setTimeout(()=>{ URL.revokeObjectURL(url); a.remove(); }, 1500); return true; }catch(_){ return false; } };
     const tryGM = ()=>{ if(typeof GM_download==='function'){ try{ const dataUrl='data:'+type+','+encodeURIComponent(String(data)); GM_download({url:dataUrl, name, saveAs:true}); return true; }catch(_){ return false; } } return false; };
     const tryMs = ()=>{ try{ if('msSaveOrOpenBlob' in navigator){ navigator.msSaveOrOpenBlob(blob, name); return true; } }catch(_){ return false; } return false; };
-    tryShare().then(ok=>{ if(ok) return; if(tryAnchor()) return; if(tryGM()) return; if(tryMs()) return; const url=URL.createObjectURL(blob); window.open(url,'_blank'); setTimeout(()=>URL.revokeObjectURL(url),2000); });
+    (async()=>{ if(await tryShare()) return; if(tryAnchor()) return; if(tryGM()) return; if(tryMs()) return; const url=URL.createObjectURL(blob); window.open(url,'_blank'); setTimeout(()=>URL.revokeObjectURL(url),2000); })();
   };
   function exportTxt(){
     if(!records.length){ showPrompt('No captured data. Use “Capture now” first.',{cancel:false, okText:'ok', onOK:hidePrompt}); return; }
     const items=records.slice().sort((a,b)=>a.t-b.t);
     const lines=['# '+(document.title||'CrushOn Chat'),'URL: '+location.href,'AI: '+currentAIName(),'Exported: '+new Date().toISOString(),'' ];
     for(const it of items){ lines.push(`[${labelFor(it.who)}] `+stripHTML(it.html)); lines.push(''); }
-    download('crushon-chat-'+ts()+'.txt', lines.join('\n')); setStatus('exported .txt','ok');
+    download('crushon-chat-'+ts()+'.txt', lines.join('\n'));
+    setStatus('exported .txt','ok');
   }
   function exportHTML(){
     if(!records.length){ showPrompt('No captured data. Use “Capture now” first.',{cancel:false, okText:'ok', onOK:hidePrompt}); return; }
@@ -571,7 +536,8 @@ article.msg .body img{max-width:100%;height:auto}pre,code{background:#0e0e0e;bor
 </style></head><body><div class="chat"><div class="title"># ${escapeHtml(document.title||'CrushOn Chat')}</div><div class="meta">URL: ${escapeHtml(location.href)}<br>AI: ${escapeHtml(currentAIName())}<br>Exported: ${new Date().toISOString()}</div>`;
     const body=items.map(it=>{ const capCls=(it.who==='USER')?'user':'ai'; const capTxt='['+escapeHtml(labelFor(it.who))+']'; return `<article class="msg"><div class="cap ${capCls}">${capTxt}</div><div class="body">${it.html}</div></article>`; }).join('');
     const html=head+body+'</div></body></html>';
-    download('crushon-chat-'+ts()+'.html', html, 'text/html;charset=utf-8'); setStatus('exported .html','ok');
+    download('crushon-chat-'+ts()+'.html', html, 'text/html;charset=utf-8');
+    setStatus('exported .html','ok');
   }
 
   // ---------- simple prompt helpers ----------
