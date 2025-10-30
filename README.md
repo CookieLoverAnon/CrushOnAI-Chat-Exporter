@@ -1,6 +1,7 @@
 # CrushOnAI-Chat-Exporter
 Capture chats and export as TXT/HTML.<br>
 
+**V1.6 - Updated for latest site change.**<br>
 **V1.5 - Now easier, cleaner, and includes a clear separation between "AI" and "User" messages.**<br>
 **Only tested in Firefox (PC+Android) with ViolentMonkey**
 
